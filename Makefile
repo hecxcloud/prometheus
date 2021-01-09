@@ -66,9 +66,18 @@ test: common-test react-app-test
 
 .PHONY: npm_licenses
 npm_licenses: $(REACT_APP_NODE_MODULES_PATH)
+# only run npm_licenses on Linux OS since we need to use GNU-tar (MacOS is using BSD-tar)
+ifneq ($(OS),Windows_NT)
+  ifeq ($(shell uname -s),Linux)
 	@echo ">> bundling npm licenses"
 	rm -f $(REACT_APP_NPM_LICENSES_TARBALL)
 	find $(REACT_APP_NODE_MODULES_PATH) -iname "license*" | tar cfj $(REACT_APP_NPM_LICENSES_TARBALL) --transform 's/^/npm_licenses\//' --files-from=-
+  else
+	@echo ">> Skipping npm licenses building since it needs GNU-tar"
+  endif
+else
+	@echo ">> Skipping npm licenses building since it needs Linux commands"
+endif
 
 .PHONY: tarball
 tarball: npm_licenses common-tarball
@@ -77,7 +86,7 @@ tarball: npm_licenses common-tarball
 docker: npm_licenses common-docker
 
 .PHONY: build
-build: assets common-build
+build: assets npm_licenses common-build
 
 .PHONY: bench_tsdb
 bench_tsdb: $(PROMU)
