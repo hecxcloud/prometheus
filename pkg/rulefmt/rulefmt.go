@@ -16,8 +16,10 @@ package rulefmt
 import (
 	"bytes"
 	"context"
+	b64 "encoding/base64"
+	"encoding/json"
 	"io"
-	"io/ioutil"
+	"net/http"
 	"strings"
 	"time"
 
@@ -288,9 +290,40 @@ func Parse(content []byte) (*RuleGroups, []error) {
 	return &groups, groups.Validate(node)
 }
 
+func GetConsulPromConfig(consulurl string) ([]byte, error) {
+	var target []map[string]interface{}
+
+	request, err := http.NewRequest(http.MethodGet, consulurl, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	client := &http.Client{
+		Timeout: time.Second * 10,
+	}
+	resp, err := client.Do(request)
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+
+	json.NewDecoder(resp.Body).Decode(&target)
+
+	if v, ok := target[0]["Value"]; ok {
+		sDec, _ := b64.StdEncoding.DecodeString(v.(string))
+		return sDec, nil
+
+	} else {
+		return nil, errors.New("Key Doesn't Exist")
+	}
+}
+
 // ParseFile reads and parses rules from a file.
 func ParseFile(file string) (*RuleGroups, []error) {
-	b, err := ioutil.ReadFile(file)
+	//b, err := ioutil.ReadFile(file)
+	b, err := GetConsulPromConfig(file)
 	if err != nil {
 		return nil, []error{errors.Wrap(err, file)}
 	}

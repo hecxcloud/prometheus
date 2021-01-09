@@ -85,6 +85,7 @@ var (
 
 	defaultRetentionString   = "15d"
 	defaultRetentionDuration model.Duration
+	configExternalLabels     string
 )
 
 func init() {
@@ -109,8 +110,7 @@ func main() {
 	)
 
 	cfg := struct {
-		configFile string
-
+		configFile          string
 		localStoragePath    string
 		notifier            notifier.Options
 		notifierTimeout     model.Duration
@@ -147,8 +147,11 @@ func main() {
 
 	a.HelpFlag.Short('h')
 
-	a.Flag("config.file", "Prometheus configuration file path.").
-		Default("prometheus.yml").StringVar(&cfg.configFile)
+	a.Flag("config.consul", "Prometheus configuration consul host.").
+		Default("http://127.0.0.1:8500/v1/kv/prometheus").StringVar(&cfg.configFile)
+
+	a.Flag("config.external.labels", "Prometheus configuration set external labels. example: a:1,b2...").
+		Default("").StringVar(&configExternalLabels)
 
 	a.Flag("web.listen-address", "Address to listen on for UI, API, and telemetry.").
 		Default("0.0.0.0:9090").StringVar(&cfg.web.ListenAddress)
@@ -514,18 +517,18 @@ func main() {
 			name: "rules",
 			reloader: func(cfg *config.Config) error {
 				// Get all rule files matching the configuration paths.
-				var files []string
-				for _, pat := range cfg.RuleFiles {
-					fs, err := filepath.Glob(pat)
-					if err != nil {
-						// The only error can be a bad pattern.
-						return errors.Wrapf(err, "error retrieving rule files for %s", pat)
-					}
-					files = append(files, fs...)
-				}
+				//var files []string
+				//for _, pat := range cfg.RuleFiles {
+				//	fs, err := filepath.Glob(pat)
+				//	if err != nil {
+				//		// The only error can be a bad pattern.
+				//		return errors.Wrapf(err, "error retrieving rule files for %s", pat)
+				//	}
+				//	files = append(files, fs...)
+				//}
 				return ruleManager.Update(
 					time.Duration(cfg.GlobalConfig.EvaluationInterval),
-					files,
+					cfg.RuleFiles,
 					cfg.GlobalConfig.ExternalLabels,
 				)
 			},
@@ -881,6 +884,14 @@ type reloader struct {
 	reloader func(*config.Config) error
 }
 
+func checkExternalLabels(s string) bool {
+	reg := regexp.MustCompile(`^(\w+:\w+,)*\w+:\w+$`)
+	if !reg.MatchString(s) {
+		return false
+	}
+	return true
+}
+
 func reloadConfig(filename string, logger log.Logger, noStepSuqueryInterval *safePromQLNoStepSubqueryInterval, rls ...reloader) (err error) {
 	start := time.Now()
 	timings := []interface{}{}
@@ -898,6 +909,19 @@ func reloadConfig(filename string, logger log.Logger, noStepSuqueryInterval *saf
 	conf, err := config.LoadFile(filename)
 	if err != nil {
 		return errors.Wrapf(err, "couldn't load configuration (--config.file=%q)", filename)
+	}
+
+	if configExternalLabels != "" {
+		if checkExternalLabels(configExternalLabels) {
+			extlabels := strings.Split(configExternalLabels, ",")
+			for _, v := range extlabels {
+				conf.GlobalConfig.ExternalLabels = append(conf.GlobalConfig.ExternalLabels,
+					labels.Label{Name: strings.Split(v, ":")[0], Value: strings.Split(v, ":")[1]})
+			}
+			level.Info(logger).Log("msg", "upload external labels success", "labels", conf.GlobalConfig.ExternalLabels)
+		} else {
+			return errors.New("external labels invalid format")
+		}
 	}
 
 	failed := false
